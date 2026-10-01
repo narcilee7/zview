@@ -1,0 +1,26 @@
+# Build outputs
+zig-out/
+.zig-cache/
+*.zig.zon.deps/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Vendor / local
+vendor/
+local.zig
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs / tmp
+*.log
+/tmp/
