@@ -4,6 +4,7 @@
 > Tauri 的安全架构 × Electron 的壳 API 广度 × Zig 的 comptime 单一真相源。
 
 **Phase 0 — closed loop achieved (2026-10-02).**
+**Phase 0.5 — infrastructure lockdown (see docs/INFRA.md).**
 
 ## What this is
 
@@ -63,6 +64,11 @@ src/bridge.zig            comptime scan + dispatch table + JSON (4 tests)
 src/runtime.zig           orchestrator (webview ↔ bridge ↔ JS)
 src/webview_apple.zig     C-ABI surface to handler.m
 src/handler.m             151-line Obj-C handler (NSWindow + WKWebView + JS shim)
+src/log.zig                 leveled logger (env: ZVIEW_LOG=trace|debug|info|warn|err)
+src/errors.zig              typed bridge error protocol (Code enum + JSON payload)
+src/allocators.zig          arena-per-call scope (implements P2 flat-RSS)
+src/webview.zig             compile-time backend selector
+src/webview_stub.zig        stub for non-macOS (returns PlatformNotSupported)
 src/process.zig           RSS via Mach task_info
 examples/counter/         the MVP app (HTML + Zig + JS + CSS)
 tools/bench.sh            Phase 0 benchmark harness

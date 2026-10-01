@@ -1,9 +1,35 @@
 //! Bridge layer — JSON dispatch from JS → Zig, with comptime-generated table.
 //! Phase 0 protocol: JSON in, JSON out. Phase 1 swaps to compact binary, no API change.
+//!
+//! Phase 0.5 lockdown: dispatch returns a `Result` union with a typed
+//! `errors.Payload` on failure. The runtime translates this to wire JSON.
 
 const std = @import("std");
+const errors = @import("errors.zig");
 
 const Decl = std.builtin.Type.Declaration;
+
+/// One entry in the comptime-generated dispatch table.
+pub const Entry = struct {
+    name: []const u8,
+    invoke: *const fn (app: *anyopaque) Result,
+};
+
+/// Result of a bridge call. `.value` is the JSON-serialized return value
+/// (without the `ok: true` envelope — the runtime adds that). `.err` is
+/// the wire-ready error payload.
+pub const Result = union(enum) {
+    value: []const u8,
+    err: errors.Payload,
+
+    /// Test helper: unwrap `.value` or panic. Use in tests only.
+    pub fn expectValue(self: Result) []const u8 {
+        return switch (self) {
+            .value => |v| v,
+            .err => |e| std.debug.panic("expected .value, got err code={s} msg={s}", .{ @tagName(e.code), e.message }),
+        };
+    }
+};
 
 /// Comptime predicate: does `decl` describe a bridgeable method on T?
 fn isBridgeableMethod(comptime T: type, decl: Decl) bool {
@@ -15,9 +41,6 @@ fn isBridgeableMethod(comptime T: type, decl: Decl) bool {
     if (ti != .@"fn") return false;
     const fn_info = ti.@"fn";
     if (fn_info.params.len != 1) return false;
-    if (fn_info.return_type == null) return false;
-    const ret_type = fn_info.return_type.?;
-    if (ret_type == void) return false;
     const param_type = fn_info.params[0].type.?;
     const pointee_info = @typeInfo(param_type);
     if (pointee_info != .pointer) return false;
@@ -25,12 +48,6 @@ fn isBridgeableMethod(comptime T: type, decl: Decl) bool {
     if (pointee_info.pointer.child != T) return false;
     return true;
 }
-
-/// One entry in the comptime-generated dispatch table.
-pub const Entry = struct {
-    name: []const u8,
-    invoke: *const fn (app: *anyopaque) []const u8,
-};
 
 pub fn Bridge(comptime T: type) type {
     const info = @typeInfo(T).@"struct";
@@ -46,13 +63,17 @@ pub fn Bridge(comptime T: type) type {
         pub const AppType = T;
         pub const entries: []const Entry = &Entries;
 
-        pub fn dispatch(app: *T, method: []const u8) ![]const u8 {
+        pub fn dispatch(app: *T, method: []const u8) Result {
             for (entries) |e| {
                 if (std.mem.eql(u8, e.name, method)) {
                     return e.invoke(app);
                 }
             }
-            return error.UnknownMethod;
+            return .{ .err = blk: {
+                var buf: [128]u8 = undefined;
+                const m = std.fmt.bufPrint(&buf, "no such method: {s}", .{method}) catch "no such method";
+                break :blk errors.Payload{ .code = .unknown_method, .message = m };
+            } };
         }
 
         pub fn has(method: []const u8) bool {
@@ -76,10 +97,16 @@ fn buildEntries(comptime T: type, comptime N: usize) [N]Entry {
         if (!isBridgeableMethod(T, decl)) continue;
         const fn_val = @field(T, decl.name);
         const Helper = struct {
-            fn invoke_typed(app: *anyopaque) []const u8 {
+            fn invoke_typed(app: *anyopaque) Result {
                 const real: *T = @ptrCast(@alignCast(app));
                 const value = @call(.auto, fn_val, .{real});
-                return serializeValue(@TypeOf(value), value) catch "null";
+                const serialized = serializeValue(@TypeOf(value), value) catch |err| {
+                    return .{ .err = .{
+                        .code = .serialize_error,
+                        .message = @errorName(err),
+                    } };
+                };
+                return .{ .value = serialized };
             }
         };
         buf[idx] = .{
@@ -98,11 +125,6 @@ pub fn serializeValue(comptime T: type, value: T) ![]const u8 {
     try std.json.Stringify.value(value, .{}, &w);
     return buf[0..w.end];
 }
-
-pub const Response = union(enum) {
-    ok: []const u8,
-    err: []const u8,
-};
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
@@ -157,15 +179,18 @@ test "Bridge: dispatch returns JSON-serialized value" {
     var s = Sample{};
     const B = Bridge(Sample);
 
-    try std.testing.expectEqualStrings("1", try B.dispatch(&s, "inc"));
-    try std.testing.expectEqualStrings("2", try B.dispatch(&s, "inc"));
-    try std.testing.expectEqualStrings("0", try B.dispatch(&s, "reset"));
-    try std.testing.expectEqualStrings("1", try B.dispatch(&s, "inc"));
+    try std.testing.expectEqualStrings("1", B.dispatch(&s, "inc").expectValue());
+    try std.testing.expectEqualStrings("2", B.dispatch(&s, "inc").expectValue());
+    try std.testing.expectEqualStrings("0", B.dispatch(&s, "reset").expectValue());
+    try std.testing.expectEqualStrings("1", B.dispatch(&s, "inc").expectValue());
 
-    try std.testing.expectError(error.UnknownMethod, B.dispatch(&s, "nope"));
+    const r = B.dispatch(&s, "nope");
+    try std.testing.expect(r == .err);
+    try std.testing.expectEqual(errors.Code.unknown_method, r.err.code);
+    try std.testing.expect(std.mem.indexOf(u8, r.err.message, "nope") != null);
 }
 
-test "Bridge: handles string and float return values" {
+test "Bridge: handles string, float, bool return values" {
     const Sample = struct {
         pub fn name(_: *@This()) []const u8 {
             return "zview";
@@ -181,8 +206,7 @@ test "Bridge: handles string and float return values" {
     var s = Sample{};
     const B = Bridge(Sample);
 
-    try std.testing.expectEqualStrings("\"zview\"", try B.dispatch(&s, "name"));
-    try std.testing.expectEqualStrings("3.14159", try B.dispatch(&s, "pi"));
-    try std.testing.expectEqualStrings("true", try B.dispatch(&s, "truth"));
+    try std.testing.expectEqualStrings("\"zview\"", B.dispatch(&s, "name").expectValue());
+    try std.testing.expectEqualStrings("3.14159", B.dispatch(&s, "pi").expectValue());
+    try std.testing.expectEqualStrings("true", B.dispatch(&s, "truth").expectValue());
 }
-

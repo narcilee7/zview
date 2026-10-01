@@ -1,5 +1,7 @@
 //! zview — Zig-native cross-platform desktop framework.
 //!
+//! Phase 0.5 (Infra lockdown). See docs/INFRA.md for the locked decisions.
+//!
 //! Phase 0 MVP scope (macOS only):
 //!   • single-process, system WebView (WKWebView)
 //!   • comptime-generated dispatch from `pub fn` declarations
@@ -20,12 +22,17 @@
 //! Privacy convention (Phase 0): names prefixed with `_` are excluded from the bridge.
 
 const std = @import("std");
-const builtin = @import("builtin");
 
 pub const bridge = @import("bridge.zig");
 pub const runtime = @import("runtime.zig");
 pub const Config = @import("app.zig").Config;
 pub const process = @import("process.zig");
+
+// Locked in Phase 0.5 — see docs/INFRA.md.
+pub const log = @import("log.zig");
+pub const errors = @import("errors.zig");
+pub const allocators = @import("allocators.zig");
+pub const webview = @import("webview.zig");
 
 /// Entry point. Walks the user's app struct at comptime, builds a Bridge, runs.
 pub fn run(app_instance: anytype) !void {

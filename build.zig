@@ -13,10 +13,26 @@ pub fn build(b: *std.Build) void {
     lib_mod.link_libc = true;
     linkAppleFrameworks(lib_mod);
 
-    // ─── Framework unit tests (no webview, no example code) ───────────────
+    // ─── Framework unit tests ────────────────────────────────────────────
+    // Tests need the same handler.m symbols the runtime uses, so we build
+    // a parallel module that includes the .m file. Without this the link
+    // step fails on `_zview_create` etc.
+    const test_root_module = b.createModule(.{
+        .root_source_file = b.path("src/zview.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    test_root_module.link_libc = true;
+    linkAppleFrameworks(test_root_module);
+    test_root_module.addCSourceFile(.{
+        .file = b.path("src/handler.m"),
+        .flags = &.{ "-fobjc-arc" },
+        .language = .objective_c,
+    });
+
     const lib_tests = b.addTest(.{
         .name = "zview-tests",
-        .root_module = lib_mod,
+        .root_module = test_root_module,
     });
     const run_lib_tests = b.addRunArtifact(lib_tests);
     const test_step = b.step("test", "Run framework unit tests");
