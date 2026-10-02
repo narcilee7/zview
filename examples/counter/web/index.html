@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';">
+  <title>zview Counter</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">zview<span class="dim"> · counter</span></div>
+    <div class="rss" id="rss">RSS — kB</div>
+  </header>
+
+  <main>
+    <div class="count" id="count">0</div>
+    <div class="sub" id="method">awaiting</div>
+
+    <div class="row">
+      <button class="btn minus" id="dec">−</button>
+      <button class="btn plus" id="inc">+</button>
+    </div>
+
+    <div class="row">
+      <button class="btn ghost" id="reset">reset</button>
+      <button class="btn ghost" id="ping">version</button>
+    </div>
+  </main>
+
+  <footer>
+    <code id="log">ready · zig 0.15.2 · WKWebView · JSON bridge</code>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
